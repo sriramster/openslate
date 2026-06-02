@@ -36,6 +36,11 @@
 
   let currentTheme = $state(theme.getTheme());
 
+  let ctxMenu = $state<{ x: number; y: number; note?: NoteSummary } | null>(null);
+  let ctxMenuNote = $state<NoteSummary | null>(null);
+  let renamingSlug = $state<string | null>(null);
+  let renameValue = $state("");
+
   onMount(() => {
     loadNotes();
 
@@ -46,10 +51,29 @@
     return () => clearInterval(interval);
   });
 
+  function closeCtxMenu() {
+    ctxMenu = null;
+    ctxMenuNote = null;
+  }
+
+  function handleCtxMenu(e: MouseEvent, note?: NoteSummary) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { x: e.clientX, y: e.clientY };
+    ctxMenuNote = note ?? null;
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === "s") {
       e.preventDefault();
       save();
+    }
+    if (e.key === "Escape") {
+      closeCtxMenu();
+      if (renamingSlug) {
+        renamingSlug = null;
+        renameValue = "";
+      }
     }
   }
 
@@ -92,6 +116,47 @@
     savedContent = "";
     savedTags = "";
     dirty = false;
+    closeCtxMenu();
+  }
+
+  function startRename(note: NoteSummary) {
+    renamingSlug = note.slug;
+    renameValue = note.title;
+    closeCtxMenu();
+  }
+
+  async function commitRename() {
+    if (!renamingSlug) return;
+    const slug = renamingSlug;
+    renamingSlug = null;
+    const val = renameValue.trim();
+    if (!val || val === notes.find((n) => n.slug === slug)?.title) return;
+    await api(`/api/notes/${slug}`, {
+      method: "PUT",
+      body: JSON.stringify({ title: val }),
+    });
+    if (selected?.slug === slug) {
+      selected.title = val;
+      editTitle = val;
+      savedTitle = val;
+    }
+    await loadNotes();
+  }
+
+  function cancelRename() {
+    renamingSlug = null;
+    renameValue = "";
+  }
+
+  async function deleteNote(note: NoteSummary) {
+    closeCtxMenu();
+    if (!confirm(`Delete "${note.title}"?`)) return;
+    await api(`/api/notes/${note.slug}`, { method: "DELETE" });
+    if (selected?.slug === note.slug) {
+      selected = null;
+      creating = false;
+    }
+    await loadNotes();
   }
 
   async function save() {
@@ -136,8 +201,6 @@
     dirty = true;
   }
 
-
-
   async function handleLogout() {
     await auth.logout();
     goto("/login");
@@ -146,13 +209,22 @@
   function formatDate(iso: string) {
     return iso.slice(0, 10);
   }
+
+  function focusInput(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="flex h-screen">
   <!-- Sidebar -->
-  <aside class="w-64 border-r flex flex-col bg-sidebar" style="border-color: var(--border-color);">
+  <aside
+    class="w-64 border-r flex flex-col bg-sidebar"
+    style="border-color: var(--border-color);"
+    oncontextmenu={(e) => handleCtxMenu(e)}
+  >
     <div class="p-3 border-b flex items-center justify-between" style="border-color: var(--border-color);">
       <h1 class="font-bold text-lg" style="color: var(--text-primary);">openslate</h1>
       <button onclick={handleLogout} class="text-xs" style="color: var(--text-danger);">Log out</button>
@@ -167,21 +239,42 @@
         <p class="text-sm p-2" style="color: var(--text-tertiary);">No notes yet</p>
       {:else}
         {#each notes as note}
-          <button
-            onclick={() => selectNote(note.slug)}
-            class="note-btn"
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            role="none"
+            class="note-btn-wrapper"
             class:active={selected?.slug === note.slug}
+            oncontextmenu={(e) => handleCtxMenu(e, note)}
           >
-            <div class="font-medium truncate">{note.title}</div>
-            <div class="text-xs" style="color: var(--text-secondary);">{formatDate(note.updated_at)}</div>
-            {#if note.tags.length > 0}
-              <div class="flex gap-1 mt-1 flex-wrap">
-                {#each note.tags as tag}
-                  <span class="text-xs px-1.5 py-0.5 rounded bg-tag" style="color: var(--text-secondary);">{tag}</span>
-                {/each}
-              </div>
+            {#if renamingSlug === note.slug}
+              <input
+                bind:value={renameValue}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); commitRename(); }
+                  if (e.key === "Escape") { e.preventDefault(); cancelRename(); }
+                }}
+                onblur={commitRename}
+                use:focusInput
+                class="w-full text-sm px-1 py-0.5 rounded outline-none"
+                style="color: var(--text-primary); background: var(--bg-editor); border: 1px solid var(--border-input);"
+              />
+            {:else}
+              <button
+                onclick={() => selectNote(note.slug)}
+                class="note-btn"
+              >
+                <div class="font-medium truncate">{note.title}</div>
+                <div class="text-xs" style="color: var(--text-secondary);">{formatDate(note.updated_at)}</div>
+                {#if note.tags.length > 0}
+                  <div class="flex gap-1 mt-1 flex-wrap">
+                    {#each note.tags as tag}
+                      <span class="text-xs px-1.5 py-0.5 rounded bg-tag" style="color: var(--text-secondary);">{tag}</span>
+                    {/each}
+                  </div>
+                {/if}
+              </button>
             {/if}
-          </button>
+          </div>
         {/each}
       {/if}
     </nav>
@@ -240,3 +333,66 @@
     {/if}
   </main>
 </div>
+
+<!-- Context menu backdrop -->
+{#if ctxMenu}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div
+    role="none"
+    class="fixed inset-0 z-40"
+    onclick={closeCtxMenu}
+    oncontextmenu={(e) => e.preventDefault()}
+  ></div>
+
+  <!-- Context menu -->
+  <div
+    class="fixed z-50 rounded border shadow-lg py-1 min-w-[140px]"
+    style="left: {ctxMenu.x}px; top: {ctxMenu.y}px; background: var(--bg-sidebar); border-color: var(--border-color);"
+  >
+    <button
+      onclick={startCreate}
+      class="ctx-menu-item"
+    >
+      New note
+    </button>
+    {#if ctxMenuNote}
+      <button
+        onclick={() => startRename(ctxMenuNote!)}
+        class="ctx-menu-item"
+      >
+        Rename
+      </button>
+      <div class="border-t" style="border-color: var(--border-color);"></div>
+      <button
+        onclick={() => deleteNote(ctxMenuNote!)}
+        class="ctx-menu-item"
+        style="color: var(--text-danger);"
+      >
+        Delete
+      </button>
+    {/if}
+  </div>
+{/if}
+
+<style>
+  .note-btn-wrapper {
+    border-radius: 0.25rem;
+  }
+  .note-btn-wrapper.active {
+    background: var(--bg-note-active);
+  }
+  .ctx-menu-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 0.375rem 0.75rem;
+    font-size: 0.8125rem;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--text-primary);
+  }
+  .ctx-menu-item:hover {
+    background: var(--bg-note-hover);
+  }
+</style>
