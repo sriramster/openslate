@@ -7,6 +7,7 @@
   import TaskItem from "@tiptap/extension-task-item";
   import Placeholder from "@tiptap/extension-placeholder";
   import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+  import { Table, TableRow, TableCell, TableHeader } from "@tiptap/extension-table";
   import { Markdown } from "tiptap-markdown";
   import { createLowlight, common } from "lowlight";
   import { Editor } from "@tiptap/core";
@@ -46,6 +47,12 @@
           lowlight,
           defaultLanguage: null,
         }),
+        Table.configure({
+          resizable: true,
+        }),
+        TableRow,
+        TableCell,
+        TableHeader,
         Markdown.configure({
           html: true,
           tightLists: true,

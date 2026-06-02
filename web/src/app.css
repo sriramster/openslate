@@ -583,23 +583,132 @@ body {
   }
 
   .editor-content ul[data-type="taskList"] li > label {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
     flex-shrink: 0;
-    margin-top: 2px;
+    padding-top: 3px;
+    cursor: pointer;
   }
 
   .editor-content ul[data-type="taskList"] li > label input[type="checkbox"] {
+    position: absolute;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
     cursor: pointer;
-    accent-color: var(--editor-tasklist-checkbox);
+    margin: 0;
+    padding: 0;
+    z-index: 1;
+  }
+
+  .editor-content ul[data-type="taskList"] li > label::before {
+    content: "";
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid var(--border-input);
+    border-radius: 3px;
+    background: transparent;
+    pointer-events: none;
+    transition: background 0.15s, border-color 0.15s;
+    box-sizing: border-box;
+  }
+
+  .editor-content ul[data-type="taskList"] li[data-checked="true"] > label::before {
+    background: var(--editor-tasklist-checkbox);
+    border-color: var(--editor-tasklist-checkbox);
+  }
+
+  .editor-content ul[data-type="taskList"] li[data-checked="true"] > label::after {
+    content: "";
+    position: absolute;
+    width: 5px;
+    height: 9px;
+    border: solid var(--bg-page);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg) translate(-1px, -1px);
+    top: 5px;
+    pointer-events: none;
   }
 
   .editor-content ul[data-type="taskList"] li > div {
     flex: 1;
   }
 
+  .editor-content ul[data-type="taskList"] li > div p {
+    margin: 0;
+  }
+
   .editor-content a {
     color: var(--editor-link-color);
     text-decoration: underline;
     cursor: pointer;
+  }
+
+  /* Tables */
+  --default-cell-min-width: 60px;
+
+  .editor-content .tableWrapper {
+    overflow-x: auto;
+  }
+
+  .editor-content table {
+    border-collapse: collapse;
+    table-layout: fixed;
+    width: 100%;
+    margin: 1em 0;
+    overflow: hidden;
+  }
+
+  .editor-content th,
+  .editor-content td {
+    border: 1px solid var(--border-color);
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+    min-width: var(--default-cell-min-width);
+    box-sizing: border-box;
+    position: relative;
+  }
+
+  .editor-content th {
+    background: var(--bg-note-hover);
+    font-weight: 600;
+  }
+
+  .editor-content table * {
+    color: var(--text-primary);
+  }
+
+  .editor-content .selectedCell:after {
+    z-index: 2;
+    position: absolute;
+    content: "";
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    background: var(--editor-selection-bg);
+    pointer-events: none;
+  }
+
+  .editor-content .column-resize-handle {
+    position: absolute;
+    right: -2px;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    z-index: 20;
+    background: var(--border-color);
+    pointer-events: none;
+  }
+
+  .editor-content.resize-cursor {
+    cursor: col-resize;
   }
 
   .editor-content ul,
