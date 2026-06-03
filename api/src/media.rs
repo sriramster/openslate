@@ -47,6 +47,13 @@ pub struct UpdateMediaBody {
     note_id: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct ImportUrlBody {
+    url: String,
+    note_id: Option<String>,
+    tags: Option<String>,
+}
+
 fn ext_from_mime(mime: &str) -> &str {
     match mime {
         "image/jpeg" => "jpg",
@@ -390,4 +397,93 @@ pub async fn update_media(
         tags,
         created_at: existing.created_at,
     }))
+}
+
+fn filename_from_url(url: &str) -> String {
+    url.split('/')
+        .filter(|s| !s.is_empty())
+        .last()
+        .unwrap_or("untitled")
+        .split('?')
+        .next()
+        .unwrap_or("untitled")
+        .to_string()
+}
+
+pub async fn import_from_url(
+    State(state): State<AppState>,
+    Json(body): Json<ImportUrlBody>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent("openslate/1.0")
+        .build()
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Failed to create HTTP client"}))))?;
+
+    let response = client
+        .get(&body.url)
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": format!("Failed to fetch URL: {}", e)}))))?;
+
+    if !response.status().is_success() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": format!("URL returned HTTP {}", response.status())}))));
+    }
+
+    let mime_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    let bytes = response.bytes().await.map_err(|_| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Failed to read response body"}))))?;
+
+    if bytes.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Empty response body"}))));
+    }
+
+    let original_name = filename_from_url(&body.url);
+    let id = Uuid::new_v4().to_string();
+    let ext = ext_from_mime(&mime_type);
+    let filename = format!("{}.{}", id, ext);
+    let key = format!("media/{}", filename);
+
+    state
+        .client
+        .objects()
+        .put(&state.bucket, &key)
+        .content_type(&mime_type)
+        .body_bytes(bytes.to_vec())
+        .send()
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Failed to upload file to storage"}))))?;
+
+    let note_id = body.note_id.filter(|n| !n.is_empty());
+
+    sqlx::query(
+        "INSERT INTO media (id, filename, original_name, mime_type, size, note_id) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&filename)
+    .bind(&original_name)
+    .bind(&mime_type)
+    .bind(bytes.len() as i64)
+    .bind(&note_id)
+    .execute(&state.db)
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Database error"}))))?;
+
+    let tags = body.tags.map(|t| {
+        t.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+    });
+    set_media_tags(&state.db, &id, tags).await;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "id": id, "filename": filename })),
+    ))
 }

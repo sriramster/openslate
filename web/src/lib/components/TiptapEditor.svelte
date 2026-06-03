@@ -183,8 +183,10 @@
   {#if editor}
     <EditorToolbar
       {editor}
+      noteId={noteId}
       onUploadClick={() => fileInputEl?.click()}
       onOpenMediaPicker={() => onOpenMediaPicker?.()}
+      onImportComplete={() => onUploadComplete?.()}
       uploading={uploadingFile}
     />
   {/if}
