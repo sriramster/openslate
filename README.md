@@ -33,6 +33,38 @@ Full documentation is in the [docs/](docs/index.md) directory:
 - [API Reference](docs/api-reference.md) — Full REST API docs
 - [Deployment](docs/deployment.md) — Coming soon
 
+## Deploy
+
+### DigitalOcean (or any Ubuntu VPS)
+
+**1. Create a Droplet**
+
+Choose Ubuntu 24.04, the cheapest plan ($4/mo) is plenty. Under "Additional options", paste the contents of [`scripts/cloud-init.yaml`](scripts/cloud-init.yaml) into the **User data** field. Create the Droplet.
+
+Wait 2–3 minutes for the first build. Your app is live at `http://<droplet-ip>:8080`.
+
+**2. Configure (optional)**
+
+SSH into the Droplet and edit `/opt/openslate/.env`:
+
+```bash
+DOMAIN=notes.example.com       # enables automatic HTTPS via Caddy
+R2_BUCKET=my-bucket            # enables image/file uploads
+R2_ACCOUNT_ID=abc123
+R2_ACCESS_KEY=abc123
+R2_SECRET_KEY=abc123
+```
+
+**3. Enable HTTPS (if you set DOMAIN)**
+
+Edit `/opt/openslate/docker-compose.yml` — comment out `8080:8080` and uncomment `80:80` + `443:443`. Then point your domain's DNS A record to the Droplet IP.
+
+```bash
+cd /opt/openslate && docker compose up -d
+```
+
+Caddy auto-provisions a Let's Encrypt TLS certificate. Access your notes at `https://notes.example.com`.
+
 ## Development
 
 ```bash
