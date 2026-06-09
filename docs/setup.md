@@ -1,12 +1,12 @@
 # Setup Guide
 
-This guide covers running OpenSlate without Docker (for development or bare-metal). For the easiest setup, use Docker — see [Deployment](deployment.md).
+This guide covers running OpenSlate without Docker (for development or bare-metal). For the easiest setup, use Docker; see [Deployment](deployment.md).
 
 ## Prerequisites
 
-- **Rust** (latest stable) — [rustup.rs](https://rustup.rs/)
-- **Bun** v1.x — [bun.sh](https://bun.sh/) (or Node.js + npm)
-- **Cloudflare R2** account (optional — only needed for media uploads)
+- **Rust** (latest stable). [rustup.rs](https://rustup.rs/)
+- **Bun** v1.x. [bun.sh](https://bun.sh/) (or Node.js + npm)
+- **Cloudflare R2** account (optional, only needed for media uploads)
 
 ## Clone and Install
 
@@ -38,7 +38,7 @@ Edit `api/.env` and fill in the values:
 | `R2_ACCESS_KEY` | R2 access key (optional) |
 | `R2_SECRET_KEY` | R2 secret key (optional) |
 
-> R2 credentials are optional. Leave them commented out to disable media uploads — notes, search, and themes still work.
+> R2 credentials are optional. Leave them commented out to disable media uploads; notes, search, and themes still work.
 
 ### 2. Run the backend
 
@@ -54,7 +54,7 @@ curl http://localhost:3001/api/health
 # → {"status":"ok"}
 ```
 
-On first run, SQLite migrations run automatically — the database file (`data.db`) is created in the `api/` directory.
+On first run, SQLite migrations run automatically. The database file (`data.db`) is created in the `api/` directory.
 
 ## Frontend Setup
 

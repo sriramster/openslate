@@ -20,7 +20,7 @@ cd openslate
 cp .env.example .env
 ```
 
-Edit `.env` — set a `JWT_SECRET`:
+Edit `.env` and set a `JWT_SECRET`:
 
 ```
 JWT_SECRET=your-random-secret-here
@@ -32,7 +32,7 @@ Start:
 docker compose up -d
 ```
 
-The first build compiles Rust (10–20 min on Apple Silicon, longer on Intel). Open **http://localhost:8080** — set your admin password on first visit.
+The first build compiles Rust (10–20 min on Apple Silicon, longer on Intel). Open **http://localhost:8080** and set your admin password on first visit.
 
 ### Custom port
 
@@ -58,78 +58,64 @@ Then restart: `docker compose down && docker compose up -d`.
 
 ---
 
-## Option 2: Digital Ocean VPS
+## Option 2: Cloud VPS
 
-### Method A: Cloud-init (automatic)
+### DigitalOcean
+
+#### Method A: Cloud-init (automatic)
 
 1. Log into [DigitalOcean](https://cloud.digitalocean.com), click **Create → Droplets**.
 2. Choose **Ubuntu 24.04 LTS**.
 3. Pick the cheapest plan: **$4/mo Basic** (1 vCPU, 512 MB RAM, 10 GB SSD).
-4. Scroll to **Advanced Options → User Data** — paste the entire contents of [`scripts/cloud-init.yaml`](../scripts/cloud-init.yaml).
+4. Scroll to **Advanced Options → User Data** and paste the entire contents of [`scripts/cloud-init.yaml`](../scripts/cloud-init.yaml).
 5. Click **Create Droplet**. Wait 3–5 minutes.
 
 Open `http://<droplet-ip>:8080`. On first visit, set your admin password.
 
 > **Note:** The $4 droplet has 512 MB RAM which is **not enough to compile Rust** during `docker build`. The cloud-init script will fail at the build step. See [Solving the RAM problem](#solving-the-ram-problem-on-the-4-droplet) below.
 
-### Method B: Manual (with Docker Hub/GHCR)
+#### Method B: Manual (with GHCR)
 
-Build the image on your local machine, push to a registry, then pull on the VPS. This avoids the RAM problem entirely.
+Follow the [generic GHCR setup](#setup-with-ghcr-image-recommended-for-any-vps) below.
 
-#### Step 1: Build and push from your machine
+### Hetzner
 
-```bash
-# Login to GitHub Container Registry
-echo "your-github-token" | docker login ghcr.io -u YOUR_USERNAME --password-stdin
+**Recommended plan:** CX23 (2 vCPU, 4 GB RAM, 40 GB SSD, ~€5/mo). The 4 GB RAM means you can build directly if you want, but using the GHCR pre-built image is still faster.
 
-# Build for VPS architecture (linux/amd64)
-docker buildx create --use --name multiarch
-docker buildx build --platform linux/amd64 \
-  -t ghcr.io/YOUR_USERNAME/openslate:latest \
-  --push .
-```
+1. Create a server at [Hetzner Cloud Console](https://console.hetzner.cloud):
+   - Image: **Ubuntu 24.04**
+   - Plan: **CX23**
+   - Add your SSH key under **Security → SSH Keys** (generate one with `ssh-keygen -t ed25519`)
+   - Enable IPv4 (required for public access, ~€0.50/mo extra)
 
-To create a GitHub token: **GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)**. Check `read:packages` and `write:packages`.
+2. SSH into the server:
+   ```bash
+   ssh root@<server-ip>
+   ```
 
-#### Step 2: Set up the VPS
+3. Follow the [generic GHCR setup](#setup-with-ghcr-image-recommended-for-any-vps) below.
 
-SSH into your Droplet (IP shown in DO dashboard):
+### Setup with GHCR image (recommended for any VPS)
 
-```bash
-ssh root@<droplet-ip>
-```
+If your repo has CI/CD set up (GitHub Actions builds and pushes to GHCR on every push to `main`), you can pull the pre-built image directly with no Rust compilation needed.
 
-Install Docker:
+SSH into your server and run:
 
 ```bash
-apt update
-apt install -y docker.io docker-compose-v2
+apt update && apt install -y docker.io docker-compose-v2 git
 systemctl enable --now docker
-```
-
-Clone the repo and configure:
-
-```bash
-git clone https://github.com/MrSheerluck/openslate /opt/openslate
+git clone https://github.com/YOUR_USERNAME/openslate /opt/openslate
 cd /opt/openslate
 cp .env.example .env
 sed -i "s/JWT_SECRET=.*/JWT_SECRET=$(openssl rand -hex 32)/" .env
-```
-
-Edit `docker-compose.yml` — replace `build: .` with the image:
-
-```bash
 sed -i 's#build: .#image: ghcr.io/YOUR_USERNAME/openslate:latest#' docker-compose.yml
-```
-
-Login and start:
-
-```bash
-echo "your-github-token" | docker login ghcr.io -u YOUR_USERNAME --password-stdin
+echo "YOUR_GH_PAT" | docker login ghcr.io -u YOUR_USERNAME --password-stdin
 docker compose up -d
 ```
 
-Open `http://<droplet-ip>:8080` and set your admin password.
+Open `http://<server-ip>:8080` and set your admin password.
+
+To create a GitHub PAT: **GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)**. Check `read:packages` scope (only read is needed for pulling).
 
 ---
 
@@ -141,7 +127,7 @@ In your domain's DNS provider (Cloudflare, Namecheap, GoDaddy, etc.), add an **A
 
 | Type | Name  | Value             |
 |------|-------|-------------------|
-| A    | notes | `<droplet-ip>`   |
+| A    | notes | `<server-ip>`    |
 
 This routes `notes.yourdomain.com` to your server. DNS propagation takes 2–5 minutes.
 
@@ -158,7 +144,7 @@ sed -i 's/DOMAIN=/DOMAIN=notes.yourdomain.com/' .env
 docker compose down && docker compose up -d
 ```
 
-Caddy automatically contacts Let's Encrypt, proves you own the domain, and provisions a TLS certificate. No manual cert setup, no renewal cron jobs — Caddy handles everything.
+Caddy automatically contacts Let's Encrypt, proves you own the domain, and provisions a TLS certificate. No manual cert setup, no renewal cron jobs. Caddy handles everything.
 
 Your app is now at `https://notes.yourdomain.com`.
 
@@ -166,14 +152,14 @@ Your app is now at `https://notes.yourdomain.com`.
 
 - The entrypoint script detects `DOMAIN` is set and rewrites the Caddy config from `:8080` to `notes.yourdomain.com`.
 - Caddy (with a proper domain name) automatically uses ports 80/443 and provisions TLS.
-- `docker-compose.yml` already exposes ports 80, 443, and 8080 — no changes needed.
+- `docker-compose.yml` already exposes ports 80, 443, and 8080 with no changes needed.
 - Caddy stores certificates in `/data/caddy/` (persisted in the Docker volume).
 
 ---
 
-## Solving the RAM problem on the $4 droplet
+## Solving the RAM problem (DigitalOcean $4 droplet only)
 
-The cheapest DigitalOcean droplet (512 MB RAM) cannot compile Rust. The compiler needs 1–2 GB. Solutions, in order of simplicity:
+The cheapest DigitalOcean droplet (512 MB RAM) cannot compile Rust. The compiler needs 1–2 GB. Hetzner CX23 (4 GB RAM) does not have this issue. Solutions, in order of simplicity:
 
 ### 1. Build on your machine, push to registry (recommended)
 
@@ -187,9 +173,9 @@ docker buildx build --platform linux/amd64 -t ghcr.io/you/openslate:latest --pus
 docker compose pull && docker compose up -d
 ```
 
-### 2. Upgrade to the $12 droplet
+### 2. Upgrade to a larger plan
 
-2 GB RAM — enough to compile. Simplest approach but costs more per month.
+2 GB RAM or more, enough to compile. Simplest approach but costs more per month.
 
 ### 3. Use swap space
 
@@ -224,7 +210,7 @@ After changing any value, run: `docker compose down && docker compose up -d`
 
 ## Updates
 
-### Option A: Automated (CI + Watchtower) — recommended
+### Option A: Automated (CI + Watchtower) (recommended)
 
 Once set up, updates are fully hands-off: push to `main` and the VPS updates itself within minutes.
 
@@ -239,7 +225,7 @@ Once set up, updates are fully hands-off: push to `main` and the VPS updates its
    - Name: `GHCR_PAT`
    - Value: a [classic PAT](https://github.com/settings/tokens) with `read:packages` and `write:packages` scopes.
 
-2. On your VPS, add Watchtower to `docker-compose.yml` (already included in the repo — just make sure it's present):
+2. On your VPS, add Watchtower to `docker-compose.yml` (already included in the repo, just make sure it's present):
 
    ```yaml
    watchtower:
@@ -256,7 +242,7 @@ Once set up, updates are fully hands-off: push to `main` and the VPS updates its
 
 From then on: `git push` to `main` → CI builds & pushes → Watchtower detects within 2 min → auto-updates. Nothing else needed.
 
-> **Note:** If you're only running OpenSlate locally (Option 1), you can remove Watchtower from `docker-compose.yml` or disable it with `profiles` — it's only useful on a VPS.
+> **Note:** If you're only running OpenSlate locally (Option 1), you can remove Watchtower from `docker-compose.yml` or disable it with `profiles`. It's only useful on a VPS.
 
 ### Option B: Manual (push from your machine)
 
@@ -302,15 +288,15 @@ docker compose up -d
 
 ## Troubleshooting
 
-**"This site can't be reached"** — Run `docker compose logs --tail 30` and check for errors. Common causes:
+**"This site can't be reached"**: Run `docker compose logs --tail 30` and check for errors. Common causes:
 - R2 credentials as empty strings (fixed in latest). Update the image.
 - Caddyfile error. The entrypoint now handles this.
 - Port not exposed. Verify `docker compose ps` shows port mappings.
 
-**Can't log in** — The first visit to the app should show "Set your admin password." You create the account yourself. If you already did, use the same password.
+**Can't log in**: The first visit to the app should show "Set your admin password." You create the account yourself. If you already did, use the same password.
 
-**Build fails on VPS** — Out of memory. See [Solving the RAM problem](#solving-the-ram-problem-on-the-4-droplet).
+**Build fails on VPS**: Out of memory. See [Solving the RAM problem](#solving-the-ram-problem-on-the-4-droplet).
 
-**Wrong platform error** — `linux/arm64/v8` vs `linux/amd64/v3`. You built on Apple Silicon but need AMD64. Use `--platform linux/amd64` in your build command.
+**Wrong platform error**: `linux/arm64/v8` vs `linux/amd64/v3`. You built on Apple Silicon but need AMD64. Use `--platform linux/amd64` in your build command.
 
-**Media uploads don't work** — Check `docker compose logs | grep -i r2`. Verify all four `R2_*` variables are set in `.env` with non-empty values.
+**Media uploads don't work**: Check `docker compose logs | grep -i r2`. Verify all four `R2_*` variables are set in `.env` with non-empty values.

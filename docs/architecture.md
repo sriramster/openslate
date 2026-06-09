@@ -12,7 +12,7 @@ OpenSlate is a single-user, self-hosted note-taking app with a SvelteKit fronten
               [Tiptap Editor]
 ```
 
-- The frontend is a **single-page application** — all note editing, search, and media management happens on one page (`/`).
+- The frontend is a **single-page application**; all note editing, search, and media management happens on one page (`/`).
 - The backend exposes a **REST API** on port 3001.
 - Authentication uses a **JWT stored in an httpOnly cookie** (30-day expiry).
 - The frontend proxies API requests during development via Vite's env config.
@@ -106,7 +106,7 @@ preferences (key TEXT PK, value TEXT)
 notes_fts (FTS5 virtual table on title + content)
 ```
 
-All primary keys are UUIDs (v4). Timestamps are ISO 8601 text (SQLite has no native datetime type). Foreign keys cascade on delete where appropriate. `note_links.target_note_id` is nullable — links to not-yet-created notes remain pending and resolve when the target is created.
+All primary keys are UUIDs (v4). Timestamps are ISO 8601 text (SQLite has no native datetime type). Foreign keys cascade on delete where appropriate. `note_links.target_note_id` is nullable; links to not-yet-created notes remain pending and resolve when the target is created.
 
 ## Design Decisions
 
@@ -116,6 +116,6 @@ All primary keys are UUIDs (v4). Timestamps are ISO 8601 text (SQLite has no nat
 
 **SPA over SSR:** The app is fully client-side (`ssr = false` in layout). No server rendering needed since all data is behind authentication and highly interactive (editor, command palette).
 
-**JWT in httpOnly cookies over Bearer tokens:** Simpler for a SPA — no need to manage tokens in JavaScript. Cookie is sent automatically. Protects against XSS token theft.
+**JWT in httpOnly cookies over Bearer tokens:** Simpler for a SPA; no need to manage tokens in JavaScript. Cookie is sent automatically. Protects against XSS token theft.
 
 **Single user only:** Eliminates complexity of user management, permissions, sharing. The admin password is configured via environment variable.
