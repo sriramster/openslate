@@ -7,6 +7,7 @@
   import MarkdownIt from "markdown-it";
   import katex from "katex";
   import markdownItKatex from "@traptitech/markdown-it-katex";
+  import hljs from "highlight.js";
   import { uploadFile } from "$lib/api";
 
   type ViewMode = "edit" | "split" | "preview";
@@ -42,6 +43,14 @@
     html: true,
     linkify: true,
     typographer: false,
+    highlight(str: string, lang: string) {
+      if (lang && hljs.getLanguage(lang)) {
+        try {
+          return hljs.highlight(str, { language: lang }).value;
+        } catch {}
+      }
+      return "";
+    },
   }).use(markdownItKatex, {
     katex,
     throwOnError: false,
@@ -333,21 +342,19 @@
 
   <!-- Editor + Preview -->
   <div class="flex flex-1 min-h-0">
-    {#if viewMode === "edit" || viewMode === "split"}
-      <div
-        bind:this={editorContainer}
-        class="flex-1 min-w-0 overflow-hidden"
-        class:half-width={viewMode === "split"}
-        style="border-right: {viewMode === 'split' ? '1px solid var(--border-color)' : 'none'};"
-      ></div>
-    {/if}
-    {#if viewMode === "split" || viewMode === "preview"}
-      <div
-        bind:this={previewEl}
-        class="flex-1 min-w-0 overflow-y-auto markdown-preview"
-        class:half-width={viewMode === "split"}
-      ></div>
-    {/if}
+    <div
+      bind:this={editorContainer}
+      class="flex-1 min-w-0 overflow-hidden"
+      class:hidden={viewMode === "preview"}
+      class:half-width={viewMode === "split"}
+      style="border-right: {viewMode === 'split' ? '1px solid var(--border-color)' : 'none'};"
+    ></div>
+    <div
+      bind:this={previewEl}
+      class="flex-1 min-w-0 overflow-y-auto markdown-preview"
+      class:hidden={viewMode === "edit"}
+      class:half-width={viewMode === "split"}
+    ></div>
   </div>
 </div>
 
@@ -399,6 +406,10 @@
 
   .half-width {
     width: 50%;
+  }
+
+  .hidden {
+    display: none !important;
   }
 
   /* Preview styles */
