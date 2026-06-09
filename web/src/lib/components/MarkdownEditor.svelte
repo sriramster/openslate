@@ -448,7 +448,13 @@
     border-top: 1px solid var(--editor-hr-color);
     margin: 1.5em 0;
   }
-  .markdown-preview :global(ul), .markdown-preview :global(ol) {
+  .markdown-preview :global(ul) {
+    list-style: disc;
+    padding-left: 1.5em;
+    margin: 0.5em 0;
+  }
+  .markdown-preview :global(ol) {
+    list-style: decimal;
     padding-left: 1.5em;
     margin: 0.5em 0;
   }
