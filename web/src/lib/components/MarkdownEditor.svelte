@@ -1,9 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { EditorView, basicSetup } from "codemirror";
-  import { keymap } from "@codemirror/view";
-  import { markdown } from "@codemirror/lang-markdown";
-  import { EditorState } from "@codemirror/state";
+  import { createEditorExtensions, EditorState, EditorView } from "$lib/editor";
   import MarkdownIt from "markdown-it";
   import katex from "katex";
   import markdownItKatex from "@traptitech/markdown-it-katex";
@@ -112,29 +109,12 @@
 
   let previewDebounce: ReturnType<typeof setTimeout> | null = null;
 
-  function onCmUpdate(doc: string) {
+  function handleDocChange(doc: string) {
     if (updatingContent) return;
     onContentChange?.(doc);
     if (previewDebounce) clearTimeout(previewDebounce);
     previewDebounce = setTimeout(() => renderPreview(doc), 150);
   }
-
-  const modeToggleKeymap = keymap.of([
-    {
-      key: "Ctrl-Shift-m",
-      run: () => {
-        toggleMode();
-        return true;
-      },
-    },
-    {
-      key: "Ctrl-\\",
-      run: () => {
-        toggleMode();
-        return true;
-      },
-    },
-  ]);
 
   function toggleMode() {
     if (viewMode === "edit") viewMode = "split";
@@ -149,7 +129,7 @@
     }
   }
 
-  async function uploadAndInsert(file: File) {
+  async function uploadAndInsert(file: File, view: EditorView) {
     uploadingFile = true;
     const extra: Record<string, string> = {};
     if (noteId) extra.note_id = noteId;
@@ -158,19 +138,16 @@
       if (res.ok) {
         const data = await res.json();
         const url = `${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/api/media/${data.id}/file`;
-        if (cmView) {
-          let mdText: string;
-          if (file.type.startsWith("image/")) {
-            mdText = `![${file.name}](${url})`;
-          } else {
-            mdText = `[${file.name}](${url})`;
-          }
-          const view = cmView;
-          view.dispatch(view.state.replaceSelection(mdText));
-          view.focus();
+        let mdText: string;
+        if (file.type.startsWith("image/")) {
+          mdText = `![${file.name}](${url})`;
+        } else {
+          mdText = `[${file.name}](${url})`;
         }
-        onUploadComplete?.();
+        view.dispatch(view.state.replaceSelection(mdText));
+        view.focus();
       }
+      onUploadComplete?.();
     } catch {
       // ignore
     }
@@ -180,98 +157,18 @@
   function onFilePick(e: Event) {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
-    if (file) {
-      uploadAndInsert(file);
+    if (file && cmView) {
+      uploadAndInsert(file, cmView);
       input.value = "";
     }
   }
 
   onMount(() => {
-    const cmTheme = EditorView.theme(
-      {
-        "&": {
-          height: "100%",
-          fontSize: "14px",
-        },
-        ".cm-content": {
-          fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace",
-          padding: "12px 16px",
-          caretColor: "var(--text-primary)",
-          color: "var(--text-primary)",
-        },
-        ".cm-gutters": {
-          borderRight: "1px solid var(--border-color)",
-          backgroundColor: "var(--bg-sidebar)",
-          color: "var(--text-tertiary)",
-        },
-        ".cm-activeLineGutter": {
-          backgroundColor: "var(--bg-note-active)",
-        },
-        ".cm-activeLine": {
-          backgroundColor: "transparent",
-        },
-        ".cm-cursor": {
-          borderLeftColor: "var(--text-primary)",
-        },
-        ".cm-selectionBackground, ::selection": {
-          backgroundColor: "var(--editor-selection-bg) !important",
-        },
-        ".cm-selectionMatch": {
-          backgroundColor: "var(--bg-note-active)",
-        },
-        ".cm-focused": {
-          outline: "none",
-        },
-        "&.cm-focused .cm-selectionBackground, &.cm-focused ::selection": {
-          backgroundColor: "var(--editor-selection-bg) !important",
-        },
-        ".cm-scroller": {
-          overflow: "auto",
-        },
-        ".cm-tooltip": {
-          backgroundColor: "var(--bg-sidebar)",
-          color: "var(--text-primary)",
-          border: "1px solid var(--border-color)",
-        },
-      },
-      { dark: false },
-    );
-
-    const extensions = [
-      basicSetup,
-      EditorView.lineWrapping,
-      markdown(),
-      modeToggleKeymap,
-      cmTheme,
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          onCmUpdate(update.state.doc.toString());
-        }
-      }),
-      EditorView.domEventHandlers({
-        drop: (event: DragEvent, view) => {
-          const file = event.dataTransfer?.files?.[0];
-          if (file) {
-            event.preventDefault();
-            uploadAndInsert(file);
-          }
-        },
-        paste: (event: ClipboardEvent, view) => {
-          const items = event.clipboardData?.items;
-          if (!items) return;
-          for (const item of items) {
-            if (item.kind === "file") {
-              const file = item.getAsFile();
-              if (file) {
-                event.preventDefault();
-                uploadAndInsert(file);
-                return;
-              }
-            }
-          }
-        },
-      }),
-    ];
+    const extensions = createEditorExtensions({
+      onModeToggle: toggleMode,
+      onFileUpload: (file, view) => uploadAndInsert(file, view),
+      onDocChange: handleDocChange,
+    });
 
     const state = EditorState.create({
       doc: content,
