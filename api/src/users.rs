@@ -129,3 +129,62 @@ pub async fn change_password(
 
     Ok(Json(json!({ "success": true })))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::AppState;
+    use axum::extract::State;
+    use serial_test::serial;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn setup_db() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("failed to create pool");
+
+        sqlx::query(
+            "CREATE TABLE users (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        pool
+    }
+
+    fn app_state(db: SqlitePool) -> AppState {
+        AppState {
+            db,
+            client: None,
+            bucket: None,
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_status_after_signup() {
+        let db = setup_db().await;
+        let state = app_state(db.clone());
+        let jar = CookieJar::new();
+
+        let body = Json(AuthBody {
+            password: "pass".into(),
+        });
+
+        temp_env::async_with_vars([("JWT_SECRET", Some("test_secret"))], async {
+            let _ = signup(jar, State(state.clone()), body).await.unwrap();
+        })
+        .await;
+        let Json(json) = status(State(state)).await;
+        assert_eq!(json["has_users"], true);
+    }
+}
