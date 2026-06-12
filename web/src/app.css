@@ -600,14 +600,6 @@ body {
   text-decoration: line-through !important;
 }
 
-.cm-lp-math {
-  color: var(--text-link) !important;
-}
-
-.cm-lp-math-block {
-  background: var(--editor-code-bg) !important;
-}
-
 /* ── Inline marks (unconditional) ── */
 
 .cm-lp-bold {
