@@ -80,6 +80,8 @@ interface Preferences {
   editorFont: EditorFont;
   editorFontSize: number;
   editorLineHeight: number;
+  editorCodeFont: EditorFont;
+  editorCodeFontSize: number;
   editorWidth: EditorWidth;
   editorLineNumbers: boolean;
   noteSort: NoteSort;
@@ -89,6 +91,8 @@ const DEFAULTS: Preferences = {
   editorFont: "system-mono",
   editorFontSize: 14,
   editorLineHeight: 1.6,
+  editorCodeFont: "system-mono",
+  editorCodeFontSize: 13,
   editorWidth: "full",
   editorLineNumbers: false,
   noteSort: "updated",
@@ -104,8 +108,13 @@ function applyEditorCSS() {
   if (font) {
     root.style.setProperty("--editor-font-family", font.family);
   }
+  const codeFont = FONT_BY_ID[prefs.editorCodeFont];
+  if (codeFont) {
+    root.style.setProperty("--editor-code-font-family", codeFont.family);
+  }
   root.style.setProperty("--editor-font-size", `${prefs.editorFontSize}px`);
   root.style.setProperty("--editor-line-height", String(prefs.editorLineHeight));
+  root.style.setProperty("--editor-code-font-size", `${prefs.editorCodeFontSize}px`);
 
   if (prefs.editorWidth === "constrained") {
     root.classList.add("editor-width-constrained");
@@ -128,9 +137,16 @@ export async function loadFromServer() {
       if (data.editorFont && FONT_BY_ID[data.editorFont]) {
         prefs.editorFont = data.editorFont as EditorFont;
       }
+      if (data.editorCodeFont && FONT_BY_ID[data.editorCodeFont]) {
+        prefs.editorCodeFont = data.editorCodeFont as EditorFont;
+      }
       if (data.editorFontSize !== undefined) {
         const n = Number(data.editorFontSize);
         if (!isNaN(n) && n >= 10 && n <= 28) prefs.editorFontSize = n;
+      }
+      if (data.editorCodeFontSize !== undefined) {
+        const n = Number(data.editorCodeFontSize);
+        if (!isNaN(n) && n >= 10 && n <= 24) prefs.editorCodeFontSize = n;
       }
       if (data.editorLineHeight !== undefined) {
         const n = Number(data.editorLineHeight);

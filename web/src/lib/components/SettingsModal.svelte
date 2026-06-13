@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { X } from "@lucide/svelte";
+  import { X, Code } from "@lucide/svelte";
   import * as prefs from "$lib/preferences.svelte";
   import * as theme from "$lib/theme.svelte";
 
@@ -21,6 +21,18 @@
         last.fonts.push(f);
       } else {
         acc.push({ group: f.group, fonts: [f] });
+      }
+      return acc;
+    }, []),
+  );
+
+  let themeGroups = $derived(
+    theme.themes.reduce<{ group: string; items: typeof theme.themes }[]>((acc, t) => {
+      const last = acc[acc.length - 1];
+      if (last && last.group === t.group) {
+        last.items.push(t);
+      } else {
+        acc.push({ group: t.group, items: [t] });
       }
       return acc;
     }, []),
@@ -133,6 +145,49 @@
             </div>
           </div>
 
+          <!-- Code font -->
+          <div class="mb-3 pt-2 border-t" style="border-color: var(--border-color);">
+            <div class="flex items-center gap-2 mb-2">
+              <Code size={14} style="color: var(--text-secondary);" />
+              <span class="text-xs" style="color: var(--text-tertiary);">Code blocks</span>
+            </div>
+            <select
+              id="code-font-select"
+              value={currentPrefs.editorCodeFont}
+              onchange={(e) => prefs.setPreference("editorCodeFont", (e.target as HTMLSelectElement).value)}
+              class="w-full text-xs px-2 py-1.5 rounded border outline-none cursor-pointer mb-2"
+              style="color: var(--text-primary); background: var(--bg-editor); border-color: var(--border-input);"
+            >
+              {#each fontGroups as group}
+                {#if group.group === "Monospace"}
+                  <optgroup label={group.group}>
+                    {#each group.fonts as font}
+                      <option value={font.id}>{font.label}</option>
+                    {/each}
+                  </optgroup>
+                {/if}
+              {/each}
+            </select>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="text-xs" for="code-font-size-slider" style="color: var(--text-secondary);">Code size</label>
+              <span class="text-xs font-medium px-1.5 py-0.5 rounded" style="color: var(--text-btn-primary); background: var(--bg-btn-primary);">{currentPrefs.editorCodeFontSize}px</span>
+            </div>
+            <input
+              id="code-font-size-slider"
+              type="range"
+              min="10"
+              max="24"
+              value={currentPrefs.editorCodeFontSize}
+              oninput={(e) => prefs.setPreference("editorCodeFontSize", Number((e.target as HTMLInputElement).value))}
+              class="styled-slider w-full"
+              style="--fill: {(currentPrefs.editorCodeFontSize - 10) / 14 * 100};"
+            />
+            <div class="flex justify-between mt-0.5">
+              <span class="text-xs" style="color: var(--text-tertiary);">10</span>
+              <span class="text-xs" style="color: var(--text-tertiary);">24</span>
+            </div>
+          </div>
+
           <!-- Editor width -->
           <div class="mb-3">
             <label class="text-xs block mb-1.5" style="color: var(--text-secondary);">Editor width</label>
@@ -200,24 +255,21 @@
         <!-- Theme -->
         <section>
           <h3 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Theme</h3>
-          <div class="flex flex-wrap gap-2">
-            {#each theme.themes as t}
-              <button
-                onclick={() => { theme.setTheme(t.id); }}
-                class="flex items-center gap-2 px-3 py-1.5 rounded border cursor-pointer text-xs transition-colors"
-                class:active={currentTheme === t.id}
-                style={currentTheme === t.id
-                  ? "background: var(--bg-btn-primary); color: var(--text-btn-primary); border-color: var(--bg-btn-primary);"
-                  : "background: transparent; color: var(--text-secondary); border-color: var(--border-color);"}
-              >
-                <span
-                  class="w-3 h-3 rounded-full border"
-                  style="background: {t.id === 'light' ? '#ffffff' : t.id === 'dark' ? '#25262b' : t.id === 'sepia' ? '#f4ecd8' : t.id === 'nord' ? '#3b4252' : t.id === 'monokai' ? '#272822' : '#1a1b26'}; border-color: var(--border-color);"
-                ></span>
-                {t.name}
-              </button>
+          <select
+            id="theme-select"
+            value={currentTheme}
+            onchange={(e) => theme.setTheme((e.target as HTMLSelectElement).value as theme.Theme)}
+            class="w-full text-xs px-2 py-1.5 rounded border outline-none cursor-pointer"
+            style="color: var(--text-primary); background: var(--bg-editor); border-color: var(--border-input);"
+          >
+            {#each themeGroups as group}
+              <optgroup label={group.group}>
+                {#each group.items as t}
+                  <option value={t.id}>{t.name}</option>
+                {/each}
+              </optgroup>
             {/each}
-          </div>
+          </select>
         </section>
       </div>
     </div>

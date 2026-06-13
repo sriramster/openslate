@@ -540,15 +540,7 @@
     </nav>
 
     <!-- Bottom bar -->
-    <div class="p-3 border-t space-y-3" style="border-color: var(--border-color);">
-      <div class="flex flex-wrap gap-1.5">
-        <button onclick={() => { theme.setTheme("light"); currentTheme = "light"; }} class="theme-dot" class:active={currentTheme === "light"} style="background: #ffffff;" title="Light"></button>
-        <button onclick={() => { theme.setTheme("dark"); currentTheme = "dark"; }} class="theme-dot" class:active={currentTheme === "dark"} style="background: #25262b;" title="Dark"></button>
-        <button onclick={() => { theme.setTheme("sepia"); currentTheme = "sepia"; }} class="theme-dot" class:active={currentTheme === "sepia"} style="background: #f4ecd8;" title="Sepia"></button>
-        <button onclick={() => { theme.setTheme("nord"); currentTheme = "nord"; }} class="theme-dot" class:active={currentTheme === "nord"} style="background: #3b4252;" title="Nord"></button>
-        <button onclick={() => { theme.setTheme("monokai"); currentTheme = "monokai"; }} class="theme-dot" class:active={currentTheme === "monokai"} style="background: #272822;" title="Monokai"></button>
-        <button onclick={() => { theme.setTheme("tokyo-night"); currentTheme = "tokyo-night"; }} class="theme-dot" class:active={currentTheme === "tokyo-night"} style="background: #1a1b26;" title="Tokyo Night"></button>
-      </div>
+    <div class="p-3 border-t" style="border-color: var(--border-color);">
       <div class="flex items-center justify-between">
         <button
           onclick={() => settingsOpen = true}
