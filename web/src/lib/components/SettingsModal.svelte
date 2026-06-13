@@ -90,9 +90,10 @@
 
           <!-- Font size -->
           <div class="mb-3">
-            <label class="text-xs block mb-1.5" for="font-size-slider" style="color: var(--text-secondary);">
-              Font size: {currentPrefs.editorFontSize}px
-            </label>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="text-xs" for="font-size-slider" style="color: var(--text-secondary);">Font size</label>
+              <span class="text-xs font-medium px-1.5 py-0.5 rounded" style="color: var(--text-btn-primary); background: var(--bg-btn-primary);">{currentPrefs.editorFontSize}px</span>
+            </div>
             <input
               id="font-size-slider"
               type="range"
@@ -100,15 +101,21 @@
               max="28"
               value={currentPrefs.editorFontSize}
               oninput={(e) => prefs.setPreference("editorFontSize", Number((e.target as HTMLInputElement).value))}
-              class="w-full"
+              class="styled-slider w-full"
+              style="--fill: {(currentPrefs.editorFontSize - 10) / 18 * 100};"
             />
+            <div class="flex justify-between mt-0.5">
+              <span class="text-xs" style="color: var(--text-tertiary);">10</span>
+              <span class="text-xs" style="color: var(--text-tertiary);">28</span>
+            </div>
           </div>
 
           <!-- Line height -->
           <div class="mb-3">
-            <label class="text-xs block mb-1.5" for="line-height-slider" style="color: var(--text-secondary);">
-              Line height: {currentPrefs.editorLineHeight.toFixed(1)}
-            </label>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="text-xs" for="line-height-slider" style="color: var(--text-secondary);">Line height</label>
+              <span class="text-xs font-medium px-1.5 py-0.5 rounded" style="color: var(--text-btn-primary); background: var(--bg-btn-primary);">{currentPrefs.editorLineHeight.toFixed(1)}</span>
+            </div>
             <input
               id="line-height-slider"
               type="range"
@@ -117,8 +124,13 @@
               step="0.1"
               value={currentPrefs.editorLineHeight}
               oninput={(e) => prefs.setPreference("editorLineHeight", Number((e.target as HTMLInputElement).value))}
-              class="w-full"
+              class="styled-slider w-full"
+              style="--fill: {(currentPrefs.editorLineHeight - 1.0) / 1.5 * 100};"
             />
+            <div class="flex justify-between mt-0.5">
+              <span class="text-xs" style="color: var(--text-tertiary);">1.0</span>
+              <span class="text-xs" style="color: var(--text-tertiary);">2.5</span>
+            </div>
           </div>
 
           <!-- Editor width -->
@@ -211,3 +223,73 @@
     </div>
   </div>
 {/if}
+
+<style>
+  .styled-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--bg-tag);
+    outline: none;
+    cursor: pointer;
+  }
+
+  .styled-slider::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(
+      to right,
+      var(--bg-btn-primary) 0%,
+      var(--bg-btn-primary) var(--fill),
+      var(--bg-tag) var(--fill),
+      var(--bg-tag) 100%
+    );
+  }
+
+  .styled-slider::-moz-range-track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--bg-tag);
+    border: none;
+  }
+
+  .styled-slider::-moz-range-progress {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--bg-btn-primary);
+  }
+
+  .styled-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--bg-btn-primary);
+    border: 2px solid var(--bg-page);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    margin-top: -5px;
+    cursor: pointer;
+    transition: transform 0.1s;
+  }
+
+  .styled-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+  }
+
+  .styled-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--bg-btn-primary);
+    border: 2px solid var(--bg-page);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    cursor: pointer;
+    transition: transform 0.1s;
+  }
+
+  .styled-slider::-moz-range-thumb:hover {
+    transform: scale(1.15);
+  }
+</style>
