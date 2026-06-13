@@ -4,67 +4,41 @@
   import * as auth from "$lib/auth.svelte";
   import * as theme from "$lib/theme.svelte";
   import { goto } from "$app/navigation";
-  import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
   import MediaGallery from "$lib/components/MediaGallery.svelte";
   import MediaPicker from "$lib/components/MediaPicker.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import SettingsModal from "$lib/components/SettingsModal.svelte";
-  import { PanelLeftOpen, PanelLeftClose, Settings, LogOut, X } from "@lucide/svelte";
+  import SplitLayout from "$lib/components/SplitLayout.svelte";
+  import { PanelLeftOpen, PanelLeftClose, Settings, LogOut } from "@lucide/svelte";
   import * as prefs from "$lib/preferences.svelte";
-
-  type NoteSummary = {
-    id: string;
-    title: string;
-    slug: string;
-    tags: string[];
-    created_at: string;
-    updated_at: string;
-  };
-
-  type NoteDetail = NoteSummary & {
-    content: string;
-    backlinks: { title: string; slug: string }[];
-  };
-
-  type SearchResult = {
-    id: string;
-    title: string;
-    slug: string;
-    created_at: string;
-    updated_at: string;
-    title_highlight: string | null;
-    content_snippet: string | null;
-  };
-
-  interface TabSession {
-    id: string;
-    noteId: string | null;
-    slug: string;
-    title: string;
-    content: string;
-    tags: string;
-    dirty: boolean;
-    savedTitle: string;
-    savedContent: string;
-    savedTags: string;
-    backlinks: { title: string; slug: string }[];
-  }
+  import type { NoteSummary, NoteDetail, SearchResult, TabSession, MediaItem, PaneData, LayoutNode } from "$lib/types";
 
   let notes = $state<NoteSummary[]>([]);
   let loading = $state(true);
 
-  let tabs = $state<TabSession[]>([]);
-  let activeTabId = $state<string | null>(null);
-  let tabIdCounter = 0;
-  function nextTabId() { return `tab-${++tabIdCounter}`; }
+  let nodeIdCounter = 0;
+  function nextNodeId() { return `node-${++nodeIdCounter}`; }
 
-  let activeTab = $derived(tabs.find((t) => t.id === activeTabId) ?? null);
+  const rootPaneId = nextNodeId();
+  let panes = $state<Record<string, PaneData>>({
+    [rootPaneId]: { tabs: [], activeTabId: null, noteMedia: [] },
+  });
+  let layout = $state<LayoutNode>({ id: rootPaneId, type: "pane" });
+  let focusedPaneId = $state<string>(rootPaneId);
+
+  function getFocusedPane(): PaneData {
+    return panes[focusedPaneId] ?? { tabs: [], activeTabId: null, noteMedia: [] };
+  }
+
+  function getFocusedActiveTab(): TabSession | null {
+    const pane = getFocusedPane();
+    return pane.tabs.find(t => t.id === pane.activeTabId) ?? null;
+  }
 
   let sidebarTab = $state<"notes" | "media">("notes");
   let showMediaPicker = $state(false);
   let mediaInsertKey = $state(0);
   let mediaToInsertMd = $state("");
-  let noteMedia = $state<{ id: string; filename: string; original_name: string; mime_type: string; }[]>([]);
 
   let ctxMenu = $state<{ x: number; y: number; note?: NoteSummary } | null>(null);
   let ctxMenuNote = $state<NoteSummary | null>(null);
@@ -77,6 +51,12 @@
   let searchInputEl = $state<HTMLInputElement | null>(null);
   let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
+  let cmdPaletteOpen = $state(false);
+  let sidebarCollapsed = $state(false);
+  let settingsOpen = $state(false);
+
+  let saveDebounce: ReturnType<typeof setTimeout> | null = null;
+
   let sortedNotes = $derived(
     [...notes].sort((a, b) => {
       const sort = prefs.getPreferences().noteSort;
@@ -86,36 +66,131 @@
     }),
   );
 
-  let cmdPaletteOpen = $state(false);
-  let sidebarCollapsed = $state(false);
-  let settingsOpen = $state(false);
+  // --- Layout tree helpers ---
 
-  let saveDebounce: ReturnType<typeof setTimeout> | null = null;
+  function collectPaneIds(node: LayoutNode): string[] {
+    if (node.type === "pane") return [node.id];
+    return node.children.flatMap(c => collectPaneIds(c));
+  }
 
-  // --- Tab management ---
+  function replacePaneNode(node: LayoutNode, paneId: string, replacement: LayoutNode): LayoutNode {
+    if (node.type === "pane" && node.id === paneId) return replacement;
+    if (node.type === "split") {
+      return {
+        ...node,
+        children: node.children.map(c => replacePaneNode(c, paneId, replacement)) as [LayoutNode, LayoutNode],
+      };
+    }
+    return node;
+  }
 
-  async function switchToTab(tabId: string) {
-    if (activeTabId === tabId) return;
+  function removePaneNode(node: LayoutNode, paneId: string): LayoutNode | null {
+    if (node.type === "split") {
+      const idx = node.children.findIndex(c => c.type === "pane" && c.id === paneId);
+      if (idx >= 0) return node.children[1 - idx];
+      const newChildren = node.children.map(c => {
+        const result = removePaneNode(c, paneId);
+        return result ?? c;
+      }) as [LayoutNode, LayoutNode];
+      return { ...node, children: newChildren };
+    }
+    return node.id === paneId ? null : node;
+  }
+
+  function updateRatio(node: LayoutNode, splitId: string, ratio: number): LayoutNode {
+    if (node.type === "split" && node.id === splitId) return { ...node, ratio };
+    if (node.type === "split") {
+      return {
+        ...node,
+        children: node.children.map(c => updateRatio(c, splitId, ratio)) as [LayoutNode, LayoutNode],
+      };
+    }
+    return node;
+  }
+
+  // --- Pane operations ---
+
+  function focusPane(paneId: string) {
+    focusedPaneId = paneId;
+  }
+
+  function splitFocusedPane(direction: "vertical" | "horizontal") {
+    const newPaneId = nextNodeId();
+    const splitId = nextNodeId();
+    layout = replacePaneNode(layout, focusedPaneId, {
+      id: splitId,
+      type: "split",
+      direction,
+      ratio: 50,
+      children: [
+        { id: focusedPaneId, type: "pane" },
+        { id: newPaneId, type: "pane" },
+      ],
+    });
+    panes = { ...panes, [newPaneId]: { tabs: [], activeTabId: null, noteMedia: [] } };
+    focusedPaneId = newPaneId;
+  }
+
+  function closeFocusedPane() {
+    const ids = collectPaneIds(layout);
+    if (ids.length <= 1) return;
+    const newLayout = removePaneNode(layout, focusedPaneId);
+    if (!newLayout) return;
+    layout = newLayout;
+    const newPanes = { ...panes };
+    delete newPanes[focusedPaneId];
+    panes = newPanes;
+    focusedPaneId = collectPaneIds(layout)[0];
+  }
+
+  function focusPaneInDirection(dir: "up" | "down" | "left" | "right") {
+    const ids = collectPaneIds(layout);
+    const idx = ids.indexOf(focusedPaneId);
+    if (idx < 0) return;
+    if (dir === "left" || dir === "up") {
+      focusedPaneId = ids[(idx - 1 + ids.length) % ids.length];
+    } else {
+      focusedPaneId = ids[(idx + 1) % ids.length];
+    }
+  }
+
+  // --- Tab management (focused-pane scoped) ---
+
+  function handlePaneSwitchTab(paneId: string, tabId: string) {
+    if (paneId !== focusedPaneId && tabId === "") {
+      focusPane(paneId);
+      return;
+    }
+    if (paneId !== focusedPaneId) {
+      focusPane(paneId);
+    }
+    const pane = panes[paneId];
+    if (!pane || pane.activeTabId === tabId) return;
     if (saveDebounce) { clearTimeout(saveDebounce); saveDebounce = null; }
-    if (activeTab?.dirty) await saveActiveTab();
-    activeTabId = tabId;
-    const tab = tabs.find((t) => t.id === tabId);
-    if (tab?.noteId) loadNoteMedia(tab.noteId);
+    const prevTab = pane.tabs.find(t => t.id === pane.activeTabId);
+    if (prevTab?.dirty) savePaneTab(paneId, prevTab);
+    pane.activeTabId = tabId;
+    const tab = pane.tabs.find(t => t.id === tabId);
+    if (tab?.noteId) loadPaneNoteMedia(paneId, tab.noteId);
+    else pane.noteMedia = [];
   }
 
   async function openTabForNote(slug: string) {
-    const existing = tabs.find((t) => t.slug === slug);
+    const pane = getFocusedPane();
+    const existing = pane.tabs.find(t => t.slug === slug);
     if (existing) {
-      await switchToTab(existing.id);
+      pane.activeTabId = existing.id;
+      if (existing.noteId) loadPaneNoteMedia(focusedPaneId, existing.noteId);
       return;
     }
-    if (activeTab?.dirty) await saveActiveTab();
+    const prevTab = pane.tabs.find(t => t.id === pane.activeTabId);
+    if (prevTab?.dirty) await savePaneTab(focusedPaneId, prevTab);
     if (saveDebounce) { clearTimeout(saveDebounce); saveDebounce = null; }
     const res = await api(`/api/notes/${slug}`);
     if (res.ok) {
       const note: NoteDetail = await res.json();
       const tab: TabSession = {
-        id: nextTabId(),
+        id: nextNodeId(),
         noteId: note.id,
         slug: note.slug,
         title: note.title,
@@ -127,17 +202,19 @@
         savedTags: note.tags.join(", "),
         backlinks: note.backlinks,
       };
-      tabs = [...tabs, tab];
-      activeTabId = tab.id;
-      loadNoteMedia(note.id);
+      pane.tabs = [...pane.tabs, tab];
+      pane.activeTabId = tab.id;
+      loadPaneNoteMedia(focusedPaneId, note.id);
     }
   }
 
-  async function newTab() {
-    if (activeTab?.dirty) await saveActiveTab();
+  function newTab() {
+    const pane = getFocusedPane();
+    const prevTab = pane.tabs.find(t => t.id === pane.activeTabId);
+    if (prevTab?.dirty) savePaneTab(focusedPaneId, prevTab);
     if (saveDebounce) { clearTimeout(saveDebounce); saveDebounce = null; }
     const tab: TabSession = {
-      id: nextTabId(),
+      id: nextNodeId(),
       noteId: null,
       slug: "",
       title: "",
@@ -149,54 +226,79 @@
       savedTags: "",
       backlinks: [],
     };
-    tabs = [...tabs, tab];
-    activeTabId = tab.id;
+    pane.tabs = [...pane.tabs, tab];
+    pane.activeTabId = tab.id;
+    pane.noteMedia = [];
     closeCtxMenu();
-    noteMedia = [];
   }
 
-  async function closeTab(tabId: string) {
-    const tab = tabs.find((t) => t.id === tabId);
+  async function handlePaneCloseTab(paneId: string, tabId: string) {
+    const pane = panes[paneId];
+    if (!pane) return;
+    const tab = pane.tabs.find(t => t.id === tabId);
     if (!tab) return;
-    if (tab.dirty) await saveTab(tab);
-    const idx = tabs.indexOf(tab);
-    const wasActive = activeTabId === tabId;
-    tabs = tabs.filter((t) => t.id !== tabId);
+    if (tab.dirty) await savePaneTab(paneId, tab);
+    const idx = pane.tabs.indexOf(tab);
+    const wasActive = pane.activeTabId === tabId;
+    pane.tabs = pane.tabs.filter(t => t.id !== tabId);
     if (wasActive) {
-      if (tabs.length === 0) {
-        activeTabId = null;
-        noteMedia = [];
+      if (pane.tabs.length === 0) {
+        pane.activeTabId = null;
+        pane.noteMedia = [];
       } else {
-        const nextIdx = Math.min(idx, tabs.length - 1);
-        activeTabId = tabs[nextIdx].id;
-        const nextTab = tabs[nextIdx];
-        if (nextTab?.noteId) loadNoteMedia(nextTab.noteId);
-        else noteMedia = [];
+        const nextIdx = Math.min(idx, pane.tabs.length - 1);
+        pane.activeTabId = pane.tabs[nextIdx].id;
+        const nextTab = pane.tabs[nextIdx];
+        if (nextTab?.noteId) loadPaneNoteMedia(paneId, nextTab.noteId);
+        else pane.noteMedia = [];
       }
     }
   }
 
-  function closeActiveTab() {
-    if (activeTabId) closeTab(activeTabId);
+  function handlePaneTitleChange(paneId: string, title: string) {
+    const pane = panes[paneId];
+    if (!pane) return;
+    const tab = pane.tabs.find(t => t.id === pane.activeTabId);
+    if (tab) { tab.title = title; markPaneTabDirty(paneId); }
   }
 
-  async function nextTab() {
-    if (tabs.length < 2) return;
-    const idx = tabs.findIndex((t) => t.id === activeTabId);
-    const nextIdx = (idx + 1) % tabs.length;
-    await switchToTab(tabs[nextIdx].id);
+  function handlePaneTagsChange(paneId: string, tags: string) {
+    const pane = panes[paneId];
+    if (!pane) return;
+    const tab = pane.tabs.find(t => t.id === pane.activeTabId);
+    if (tab) { tab.tags = tags; markPaneTabDirty(paneId); }
   }
 
-  async function prevTab() {
-    if (tabs.length < 2) return;
-    const idx = tabs.findIndex((t) => t.id === activeTabId);
-    const prevIdx = (idx - 1 + tabs.length) % tabs.length;
-    await switchToTab(tabs[prevIdx].id);
+  function handlePaneContentChange(paneId: string, md: string) {
+    const pane = panes[paneId];
+    if (!pane) return;
+    const tab = pane.tabs.find(t => t.id === pane.activeTabId);
+    if (!tab) return;
+    tab.content = md;
+    syncTabTagsField(tab);
+    markPaneTabDirty(paneId);
   }
 
-  // --- Note management ---
+  function handlePaneRemoveMedia(paneId: string, m: MediaItem) {
+    const pane = panes[paneId];
+    if (!pane) return;
+    const tab = pane.tabs.find(t => t.id === pane.activeTabId);
+    if (!tab) return;
+    const url = `${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/api/media/${m.id}/file`;
+    api(`/api/media/${m.id}`, { method: "PUT", body: JSON.stringify({ note_id: "" }) });
+    const escaped = url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    tab.content = tab.content.replace(new RegExp(`!\\[.*?\\]\\(${escaped}\\)|\\[.*?\\]\\(${escaped}\\)`, "g"), "");
+    if (tab.noteId) loadPaneNoteMedia(paneId, tab.noteId);
+  }
 
-  async function saveTab(tab: TabSession) {
+  function handlePaneUploadComplete(paneId: string) {
+    const pane = panes[paneId];
+    if (!pane) return;
+    const tab = pane.tabs.find(t => t.id === pane.activeTabId);
+    if (tab?.noteId) loadPaneNoteMedia(paneId, tab.noteId);
+  }
+
+  async function savePaneTab(paneId: string, tab: TabSession) {
     if (!tab.dirty && tab.noteId) return;
     const tags = mergeTabTags(tab);
     if (!tab.noteId) {
@@ -236,26 +338,27 @@
     }
   }
 
-  function saveActiveTab() {
-    if (!activeTab) return;
-    return saveTab(activeTab);
-  }
-
-  function markTabDirty() {
-    if (!activeTab) return;
-    activeTab.dirty = true;
+  function markPaneTabDirty(paneId: string) {
+    const pane = panes[paneId];
+    if (!pane) return;
+    const tab = pane.tabs.find(t => t.id === pane.activeTabId);
+    if (!tab) return;
+    tab.dirty = true;
     if (saveDebounce) clearTimeout(saveDebounce);
-    const tid = activeTab.id;
+    const tid = tab.id;
+    const pid = paneId;
     saveDebounce = setTimeout(() => {
-      const t = tabs.find((t) => t.id === tid);
-      if (t?.dirty) saveTab(t);
+      const p = panes[pid];
+      if (!p) return;
+      const t = p.tabs.find(t => t.id === tid);
+      if (t?.dirty) savePaneTab(pid, t);
     }, 500);
   }
 
   function mergeTabTags(tab: TabSession): string[] {
     const manual = tab.tags
       .split(",")
-      .map((t) => t.trim())
+      .map(t => t.trim())
       .filter(Boolean);
     const fromContent = extractTagsFromContent(tab.content);
     return [...new Set([...manual, ...fromContent])];
@@ -265,23 +368,27 @@
     const autoTags = extractTagsFromContent(tab.content);
     const manualOnly = tab.tags
       .split(",")
-      .map((t) => t.trim())
+      .map(t => t.trim())
       .filter(Boolean)
-      .filter((t) => !autoTags.includes(t.toLowerCase()));
-    const merged = [...new Set([...autoTags, ...manualOnly])];
-    tab.tags = merged.join(", ");
+      .filter(t => !autoTags.includes(t.toLowerCase()));
+    tab.tags = [...new Set([...autoTags, ...manualOnly])].join(", ");
   }
 
   function extractTagsFromContent(md: string): string[] {
     return [...md.matchAll(/(?:^|\s)#([\w-]+)/g)]
-      .map((m) => m[1].toLowerCase())
-      .filter((t) => !/^\d/.test(t));
+      .map(m => m[1].toLowerCase())
+      .filter(t => !/^\d/.test(t));
   }
 
-  // --- Legacy wrappers for CommandPalette compatibility ---
+  // --- Legacy wrappers ---
 
-  function save() { saveActiveTab(); }
+  function save() { 
+    const pane = getFocusedPane();
+    const tab = pane.tabs.find(t => t.id === pane.activeTabId);
+    if (tab) savePaneTab(focusedPaneId, tab);
+  }
   function startCreate() { newTab(); }
+  function saveActiveTab() { save(); }
 
   // --- Sidebar note management ---
 
@@ -293,69 +400,74 @@
       if (mod && e.shiftKey && !e.altKey) {
         switch (e.code) {
           case "KeyP":
-            e.preventDefault();
-            e.stopPropagation();
+            e.preventDefault(); e.stopPropagation();
             cmdPaletteOpen = !cmdPaletteOpen;
             return;
           case "KeyK":
-            e.preventDefault();
-            e.stopPropagation();
+            e.preventDefault(); e.stopPropagation();
             newTab();
             return;
           case "KeyS":
-            e.preventDefault();
-            e.stopPropagation();
-            saveActiveTab();
+            e.preventDefault(); e.stopPropagation();
+            save();
             return;
           case "KeyF":
-            e.preventDefault();
-            e.stopPropagation();
+            e.preventDefault(); e.stopPropagation();
             focusSearch();
             return;
           case "KeyG":
-            e.preventDefault();
-            e.stopPropagation();
+            e.preventDefault(); e.stopPropagation();
             sidebarTab = sidebarTab === "media" ? "notes" : "media";
+            return;
+          case "Backslash":
+            e.preventDefault(); e.stopPropagation();
+            splitFocusedPane("vertical");
             return;
         }
       }
       if (mod && !e.shiftKey && e.code === "KeyW") {
-        e.preventDefault();
-        e.stopPropagation();
-        closeActiveTab();
+        e.preventDefault(); e.stopPropagation();
+        const pane = getFocusedPane();
+        const tab = pane.tabs.find(t => t.id === pane.activeTabId);
+        if (tab) handlePaneCloseTab(focusedPaneId, tab.id);
         return;
       }
       if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey && e.code === "Tab") {
-        e.preventDefault();
-        e.stopPropagation();
+        e.preventDefault(); e.stopPropagation();
         nextTab();
         return;
       }
       if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && e.code === "Tab") {
-        e.preventDefault();
-        e.stopPropagation();
+        e.preventDefault(); e.stopPropagation();
         prevTab();
         return;
       }
-      if (e.key === "Escape") {
-        if (cmdPaletteOpen) {
-          cmdPaletteOpen = false;
-          return;
-        }
-        if (searchQuery) {
-          clearSearch();
-          return;
-        }
-        closeCtxMenu();
-        if (renamingSlug) {
-          renamingSlug = null;
-          renameValue = "";
-        }
-      }
       if (mod && !e.shiftKey && e.code === "Backslash") {
-        e.preventDefault();
-        e.stopPropagation();
+        e.preventDefault(); e.stopPropagation();
         sidebarCollapsed = !sidebarCollapsed;
+        return;
+      }
+      // Cmd+K chord prefix for pane operations
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.code === "KeyK") {
+        e.preventDefault(); e.stopPropagation();
+        const onChord = (ev: KeyboardEvent) => {
+          document.removeEventListener("keydown", onChord);
+          if (ev.key === "ArrowLeft") { focusPaneInDirection("left"); return; }
+          if (ev.key === "ArrowRight") { focusPaneInDirection("right"); return; }
+          if (ev.key === "ArrowUp") { focusPaneInDirection("up"); return; }
+          if (ev.key === "ArrowDown") { focusPaneInDirection("down"); return; }
+          if ((ev.metaKey || ev.ctrlKey) && ev.code === "KeyW") { closeFocusedPane(); return; }
+          if ((ev.metaKey || ev.ctrlKey) && ev.shiftKey && ev.code === "Backslash") { splitFocusedPane("horizontal"); return; }
+          if ((ev.metaKey || ev.ctrlKey) && ev.code === "Backslash") { splitFocusedPane("vertical"); return; }
+        };
+        document.addEventListener("keydown", onChord);
+        return;
+      }
+      if (e.key === "Escape") {
+        if (cmdPaletteOpen) { cmdPaletteOpen = false; return; }
+        if (searchQuery) { clearSearch(); return; }
+        closeCtxMenu();
+        if (renamingSlug) { renamingSlug = null; renameValue = ""; }
       }
     }
 
@@ -367,50 +479,52 @@
     };
   });
 
+  function nextTab() {
+    const pane = getFocusedPane();
+    if (pane.tabs.length < 2) return;
+    const idx = pane.tabs.findIndex(t => t.id === pane.activeTabId);
+    const nextIdx = (idx + 1) % pane.tabs.length;
+    handlePaneSwitchTab(focusedPaneId, pane.tabs[nextIdx].id);
+  }
+
+  function prevTab() {
+    const pane = getFocusedPane();
+    if (pane.tabs.length < 2) return;
+    const idx = pane.tabs.findIndex(t => t.id === pane.activeTabId);
+    const prevIdx = (idx - 1 + pane.tabs.length) % pane.tabs.length;
+    handlePaneSwitchTab(focusedPaneId, pane.tabs[prevIdx].id);
+  }
+
   function closeCtxMenu() {
     ctxMenu = null;
     ctxMenuNote = null;
   }
 
   function handleCtxMenu(e: MouseEvent, note?: NoteSummary) {
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
     ctxMenu = { x: e.clientX, y: e.clientY };
     ctxMenuNote = note ?? null;
   }
 
-  function focusSearch() {
-    searchInputEl?.focus();
-  }
+  function focusSearch() { searchInputEl?.focus(); }
 
   async function loadNotes() {
     loading = true;
     try {
       const res = await api("/api/notes");
       notes = await res.json();
-    } catch {
-      notes = [];
-    }
+    } catch { notes = []; }
     loading = false;
   }
 
   async function doSearch(query: string) {
-    if (!query.trim()) {
-      searchResults = [];
-      searching = false;
-      return;
-    }
+    if (!query.trim()) { searchResults = []; searching = false; return; }
     searching = true;
     try {
       const res = await api(`/api/search?q=${encodeURIComponent(query)}`);
-      if (res.ok) {
-        searchResults = await res.json();
-      } else {
-        searchResults = [];
-      }
-    } catch {
-      searchResults = [];
-    }
+      if (res.ok) searchResults = await res.json();
+      else searchResults = [];
+    } catch { searchResults = []; }
     searching = false;
   }
 
@@ -422,15 +536,11 @@
   }
 
   function clearSearch() {
-    searchQuery = "";
-    searchResults = [];
-    searching = false;
+    searchQuery = ""; searchResults = []; searching = false;
     searchInputEl?.blur();
   }
 
-  function openMediaPicker() {
-    showMediaPicker = true;
-  }
+  function openMediaPicker() { showMediaPicker = true; }
 
   function handleMediaSelect(item: { id: string; original_name: string; mime_type: string }) {
     const url = `${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/api/media/${item.id}/file`;
@@ -440,31 +550,27 @@
     mediaToInsertMd = md;
     mediaInsertKey++;
     showMediaPicker = false;
-    if (activeTab?.noteId) {
+    const pane = getFocusedPane();
+    const tab = pane.tabs.find(t => t.id === pane.activeTabId);
+    if (tab?.noteId) {
       api(`/api/media/${item.id}`, {
         method: "PUT",
-        body: JSON.stringify({ note_id: activeTab.noteId }),
+        body: JSON.stringify({ note_id: tab.noteId }),
       });
     }
   }
 
-  async function loadNoteMedia(noteId: string) {
+  async function loadPaneNoteMedia(paneId: string, noteId: string) {
     try {
       const res = await api(`/api/media?note_id=${noteId}`);
-      if (res.ok) noteMedia = await res.json();
-      else noteMedia = [];
+      const pane = panes[paneId];
+      if (!pane) return;
+      if (res.ok) pane.noteMedia = await res.json();
+      else pane.noteMedia = [];
     } catch {
-      noteMedia = [];
+      const pane = panes[paneId];
+      if (pane) pane.noteMedia = [];
     }
-  }
-
-  async function removeNoteMedia(m: { id: string }) {
-    const url = `${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/api/media/${m.id}/file`;
-    await api(`/api/media/${m.id}`, { method: "PUT", body: JSON.stringify({ note_id: "" }) });
-    if (!activeTab) return;
-    const escaped = url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    activeTab.content = activeTab.content.replace(new RegExp(`!\\[.*?\\]\\(${escaped}\\)|\\[.*?\\]\\(${escaped}\\)`, "g"), "");
-    if (activeTab.noteId) loadNoteMedia(activeTab.noteId);
   }
 
   async function selectNote(slug: string) {
@@ -482,30 +588,27 @@
     const slug = renamingSlug;
     renamingSlug = null;
     const val = renameValue.trim();
-    if (!val || val === notes.find((n) => n.slug === slug)?.title) return;
-    await api(`/api/notes/${slug}`, {
-      method: "PUT",
-      body: JSON.stringify({ title: val }),
-    });
-    const openTab = tabs.find((t) => t.slug === slug);
-    if (openTab) {
-      openTab.title = val;
-      openTab.savedTitle = val;
+    if (!val || val === notes.find(n => n.slug === slug)?.title) return;
+    await api(`/api/notes/${slug}`, { method: "PUT", body: JSON.stringify({ title: val }) });
+    for (const pid of Object.keys(panes)) {
+      const p = panes[pid];
+      const tab = p.tabs.find(t => t.slug === slug);
+      if (tab) { tab.title = val; tab.savedTitle = val; }
     }
     await loadNotes();
   }
 
-  function cancelRename() {
-    renamingSlug = null;
-    renameValue = "";
-  }
+  function cancelRename() { renamingSlug = null; renameValue = ""; }
 
   async function deleteNote(note: NoteSummary) {
     closeCtxMenu();
     if (!confirm(`Delete "${note.title}"?`)) return;
     await api(`/api/notes/${note.slug}`, { method: "DELETE" });
-    const openTab = tabs.find((t) => t.slug === note.slug);
-    if (openTab) await closeTab(openTab.id);
+    for (const pid of Object.keys(panes)) {
+      const p = panes[pid];
+      const tab = p.tabs.find(t => t.slug === note.slug);
+      if (tab) handlePaneCloseTab(pid, tab.id);
+    }
     await loadNotes();
   }
 
@@ -514,14 +617,15 @@
     goto("/login");
   }
 
-  function formatDate(iso: string) {
-    return iso.slice(0, 10);
-  }
+  function formatDate(iso: string) { return iso.slice(0, 10); }
+  function focusInput(node: HTMLInputElement) { node.focus(); node.select(); }
 
-  function focusInput(node: HTMLInputElement) {
-    node.focus();
-    node.select();
-  }
+  // Active slug for sidebar highlighting (focused pane's active tab slug)
+  let activeHighlightSlug = $derived((() => {
+    const pane = getFocusedPane();
+    const tab = pane.tabs.find(t => t.id === pane.activeTabId);
+    return tab?.slug ?? "";
+  })());
 </script>
 
 <div class="flex h-screen">
@@ -625,7 +729,7 @@
           <div
             role="none"
             class="note-btn-wrapper"
-            class:active={activeTab?.slug === note.slug}
+            class:active={activeHighlightSlug === note.slug}
             oncontextmenu={(e) => handleCtxMenu(e, note)}
           >
             {#if renamingSlug === note.slug}
@@ -661,7 +765,6 @@
       {/if}
     </nav>
 
-    <!-- Bottom bar -->
     <div class="p-3 border-t" style="border-color: var(--border-color);">
       <div class="flex items-center justify-between">
         <button
@@ -680,20 +783,10 @@
 
     {#if sidebarCollapsed}
       <div class="mt-auto p-2 border-t flex flex-col items-center gap-3" style="border-color: var(--border-color);">
-        <button
-          onclick={() => settingsOpen = true}
-          class="cursor-pointer hover:opacity-80 p-1"
-          style="color: var(--text-secondary);"
-          title="Settings"
-        >
+        <button onclick={() => settingsOpen = true} class="cursor-pointer hover:opacity-80 p-1" style="color: var(--text-secondary);" title="Settings">
           <Settings size={16} />
         </button>
-        <button
-          onclick={handleLogout}
-          class="cursor-pointer hover:opacity-80 p-1"
-          style="color: var(--text-danger);"
-          title="Log out"
-        >
+        <button onclick={handleLogout} class="cursor-pointer hover:opacity-80 p-1" style="color: var(--text-danger);" title="Log out">
           <LogOut size={16} />
         </button>
       </div>
@@ -704,111 +797,28 @@
   <main class="flex-1 flex flex-col min-h-0" style="background: var(--bg-page);">
     {#if sidebarTab === "media"}
       <MediaGallery />
-    {:else if tabs.length > 0}
-      <!-- Tab bar -->
-      <div class="tab-bar">
-        {#each tabs as tab}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            role="none"
-            class="tab-item"
-            class:active={tab.id === activeTabId}
-            onclick={() => switchToTab(tab.id)}
-            onmousedown={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(tab.id); } }}
-            title={tab.title || "Untitled"}
-          >
-            {#if tab.dirty}
-              <span class="tab-dirty visible"></span>
-            {/if}
-            <span class="tab-title">{tab.title || "Untitled"}</span>
-            <button
-              class="tab-close"
-              onclick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
-              title="Close"
-            >
-              <X size={12} />
-            </button>
-          </div>
-        {/each}
-      </div>
-
-      {#if activeTab}
-        <div class="flex-1 flex flex-col min-h-0 p-4 gap-2">
-          <input
-            value={activeTab.title}
-            oninput={(e) => { activeTab.title = (e.target as HTMLInputElement).value; markTabDirty(); }}
-            placeholder="Note title"
-            class="text-2xl font-bold border-b pb-2 outline-none"
-            style="color: var(--text-primary); caret-color: var(--text-primary); border-color: var(--border-color); background: transparent;"
-          />
-          <input
-            value={activeTab.tags}
-            oninput={(e) => { activeTab.tags = (e.target as HTMLInputElement).value; markTabDirty(); }}
-            placeholder="Tags (comma separated)"
-            class="text-sm outline-none border-b pb-2"
-            style="color: var(--text-secondary); caret-color: var(--text-primary); border-color: var(--border-color); background: transparent;"
-          />
-          <MarkdownEditor
-            content={activeTab.content}
-            noteId={activeTab.noteId ?? ""}
-            insertMediaMd={mediaToInsertMd}
-            insertMediaKey={mediaInsertKey}
-            onContentChange={(md) => { activeTab.content = md; syncTabTagsField(activeTab); markTabDirty(); }}
-            onOpenMediaPicker={openMediaPicker}
-            onUploadComplete={() => { if (activeTab?.noteId) loadNoteMedia(activeTab.noteId); }}
-          />
-          {#if noteMedia.length > 0}
-            <div class="border-t pt-2 mt-4" style="border-color: var(--border-color);">
-              <p class="text-xs mb-1 font-medium" style="color: var(--text-secondary);">Attachments ({noteMedia.length})</p>
-              <div class="flex gap-2 flex-wrap">
-                {#each noteMedia as m}
-                  <div class="inline-flex items-center gap-1">
-                    <a
-                      href={`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/api/media/${m.id}/file`}
-                      target="_blank"
-                      rel="noreferrer"
-                      class="text-xs px-2 py-1 rounded border inline-flex items-center gap-1 hover:opacity-80"
-                      style="border-color: var(--border-color); color: var(--text-primary); background: var(--bg-editor); text-decoration: none;"
-                    >
-                      {m.mime_type.startsWith("image/") ? "🖼" : m.mime_type.startsWith("video/") ? "🎬" : "📄"}
-                      {m.original_name}
-                    </a>
-                    <button
-                      onclick={() => removeNoteMedia(m)}
-                      class="text-xs px-1 rounded"
-                      style="color: var(--text-danger); border: 1px solid var(--border-color); background: var(--bg-editor); cursor: pointer;"
-                      title="Remove from note"
-                    >&times;</button>
-                  </div>
-                {/each}
-              </div>
-            </div>
-          {/if}
-          {#if activeTab.backlinks && activeTab.backlinks.length > 0}
-            <div class="border-t pt-2 mt-4" style="border-color: var(--border-color);">
-              <p class="text-xs mb-1" style="color: var(--text-secondary);">Linked from:</p>
-              {#each activeTab.backlinks as bl}
-                <button
-                  onclick={() => selectNote(bl.slug)}
-                  class="text-sm hover:underline"
-                  style="color: var(--text-link);"
-                >
-                  {bl.title}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {/if}
     {:else}
-      <div class="flex-1 flex items-center justify-center">
-        <p style="color: var(--text-tertiary);">Select or create a note</p>
-      </div>
+      <SplitLayout
+        node={layout}
+        {panes}
+        {focusedPaneId}
+        onResize={(splitId, ratio) => { layout = updateRatio(layout, splitId, ratio); }}
+        insertMediaMd={mediaToInsertMd}
+        insertMediaKey={mediaInsertKey}
+        onSwitchTab={handlePaneSwitchTab}
+        onCloseTab={handlePaneCloseTab}
+        onTabTitleChange={handlePaneTitleChange}
+        onTabTagsChange={handlePaneTagsChange}
+        onTabContentChange={handlePaneContentChange}
+        onOpenMediaPicker={openMediaPicker}
+        onRemoveMedia={handlePaneRemoveMedia}
+        onUploadComplete={handlePaneUploadComplete}
+        onSelectNote={selectNote}
+      />
     {/if}
   </main>
 </div>
 
-<!-- Context menu backdrop -->
 {#if ctxMenu}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
@@ -818,53 +828,36 @@
     oncontextmenu={(e) => e.preventDefault()}
   ></div>
 
-  <!-- Context menu -->
   <div
     class="fixed z-50 rounded border shadow-lg py-1 min-w-[140px]"
     style="left: {ctxMenu.x}px; top: {ctxMenu.y}px; background: var(--bg-sidebar); border-color: var(--border-color);"
   >
-    <button
-      onclick={newTab}
-      class="ctx-menu-item"
-    >
-      New note
-    </button>
+    <button onclick={newTab} class="ctx-menu-item">New note</button>
     {#if ctxMenuNote}
-      <button
-        onclick={() => startRename(ctxMenuNote!)}
-        class="ctx-menu-item"
-      >
-        Rename
-      </button>
+      <button onclick={() => startRename(ctxMenuNote!)} class="ctx-menu-item">Rename</button>
       <div class="border-t" style="border-color: var(--border-color);"></div>
-      <button
-        onclick={() => deleteNote(ctxMenuNote!)}
-        class="ctx-menu-item"
-        style="color: var(--text-danger);"
-      >
-        Delete
-      </button>
+      <button onclick={() => deleteNote(ctxMenuNote!)} class="ctx-menu-item" style="color: var(--text-danger);">Delete</button>
     {/if}
   </div>
 {/if}
 
 {#if showMediaPicker}
-  <MediaPicker
-    onClose={() => showMediaPicker = false}
-    onSelect={handleMediaSelect}
-  />
+  <MediaPicker onClose={() => showMediaPicker = false} onSelect={handleMediaSelect} />
 {/if}
 
 <CommandPalette
   open={cmdPaletteOpen}
   onClose={() => cmdPaletteOpen = false}
   onCreateNote={newTab}
-  onSave={saveActiveTab}
+  onSave={save}
   onFocusSearch={focusSearch}
   onSwitchTab={(tab) => sidebarTab = tab}
   onSetTheme={(t) => { theme.setTheme(t); }}
   onLogout={handleLogout}
   onOpenSettings={() => settingsOpen = true}
+  onSplitRight={() => splitFocusedPane("vertical")}
+  onSplitDown={() => splitFocusedPane("horizontal")}
+  onClosePane={closeFocusedPane}
 />
 
 <SettingsModal
