@@ -543,7 +543,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_media_empty() {
-        let db = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let db = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
         sqlx::migrate!("./migrations").run(&db).await.unwrap();
         let state = crate::AppState { db, client: None, bucket: None };
 
